@@ -10,6 +10,14 @@ ELF = $(BUILD_DIR)/main.elf
 BIN = $(BUILD_DIR)/main.bin
 DEBUG = 1
 
+CFLAGS = \
+	$(ARCH_FLAGS) \
+	-Wall \
+	-std=c99 \
+	-Wno-implicit-function-declaration -Wdouble-promotion \
+	-Wextra -Wshadow -Wimplicit-function-declaration -Wredundant-decls \
+	-fno-common -ffunction-sections -fdata-sections
+
 ifeq ($(DEBUG), 1)
 	CFLAGS += -g
 else
@@ -18,14 +26,6 @@ endif
 
 include $(OPENCM3_DIR)/mk/genlink-config.mk
 include $(OPENCM3_DIR)/mk/gcc-config.mk
-
-CFLAGS = \
-	$(ARCH_FLAGS) \
-	-Wall \
-	-std=c99 \
-	-Wno-implicit-function-declaration -Wdouble-promotion \
-	-Wextra -Wshadow -Wimplicit-function-declaration -Wredundant-decls \
-	-fno-common -ffunction-sections -fdata-sections
 
 LDFLAGS += \
 	-l$(LIBNAME) \
@@ -56,7 +56,7 @@ prepare:
 	@mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.c
-	@$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
+	$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
 
 clean:
 	@rm -rf $(BUILD_DIR)
@@ -70,5 +70,5 @@ erase:
 include $(OPENCM3_DIR)/mk/genlink-rules.mk
 include $(OPENCM3_DIR)/mk/gcc-rules.mk
 
-.PRECIOUS: $(OBJS)
+.PRECIOUS: $(OBJS) $(ELF)
 .PHONY: clean flash erase
