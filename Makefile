@@ -2,22 +2,13 @@ OPENCM3_DIR = libopencm3
 TARGET_CPU = cortex-m3
 TARGET_DEVICE = STM32F10X_MD
 DEVICE = stm32f103c8t6
-
 Q = @
-
 BUILD_DIR = build
 SRC_DIR = src
 INCLUDE_DIR = include
 ELF = $(BUILD_DIR)/main.elf
 BIN = $(BUILD_DIR)/main.bin
 DEBUG = 1
-
-CFLAGS = \
-	$(ARCH_FLAGS) \
-	-std=c99 \
-	-Wno-implicit-function-declaration -Wdouble-promotion \
-	-Wextra -Wshadow -Wimplicit-function-declaration -Wredundant-decls \
-	-fno-common -ffunction-sections -fdata-sections
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -g
@@ -27,6 +18,14 @@ endif
 
 include $(OPENCM3_DIR)/mk/genlink-config.mk
 include $(OPENCM3_DIR)/mk/gcc-config.mk
+
+CFLAGS = \
+	$(ARCH_FLAGS) \
+	-Wall \
+	-std=c99 \
+	-Wno-implicit-function-declaration -Wdouble-promotion \
+	-Wextra -Wshadow -Wimplicit-function-declaration -Wredundant-decls \
+	-fno-common -ffunction-sections -fdata-sections
 
 LDFLAGS += \
 	-l$(LIBNAME) \
@@ -53,22 +52,11 @@ DEFS = -D STM32F1
 
 all: prepare $(BIN)
 
-check:
-	@echo $(LDFLAGS)
-
 prepare:
 	@mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.c
-	@echo "$(notdir $<) -> $(notdir $@)"
 	@$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
-
-# $(ELF): $(OBJS) $(LDSCRIPT)
-# 	@echo "$(notdir $<) -> $(notdir $@)"
-# 	$(LD) $(LDFLAGS) -o $(ELF) $(OBJS)
-
-# $(BIN): $(ELF)
-# 	@$(OC) -O binary $(ELF) $(BIN)
 
 clean:
 	@rm -rf $(BUILD_DIR)
@@ -82,4 +70,5 @@ erase:
 include $(OPENCM3_DIR)/mk/genlink-rules.mk
 include $(OPENCM3_DIR)/mk/gcc-rules.mk
 
-.PHONY: clean flash erase gdb
+.PRECIOUS: $(OBJS)
+.PHONY: clean flash erase
