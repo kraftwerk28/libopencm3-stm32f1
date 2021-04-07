@@ -16,7 +16,7 @@ CFLAGS = \
 	-std=c99 \
 	-Wno-implicit-function-declaration -Wdouble-promotion \
 	-Wextra -Wshadow -Wimplicit-function-declaration -Wredundant-decls \
-	-fno-common -ffunction-sections -fdata-sections
+	-fno-common -ffunction-sections -fdata-sections -Wno-unused-function
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -g
@@ -24,8 +24,10 @@ else
 	CFLAGS += -O2
 endif
 
+# ifeq (, $(wildcard ./generated.*.ld))
 include $(OPENCM3_DIR)/mk/genlink-config.mk
 include $(OPENCM3_DIR)/mk/gcc-config.mk
+# endif
 
 LDFLAGS += \
 	-l$(LIBNAME) \
@@ -41,6 +43,7 @@ INCFLAGS = \
 	-I $(OPENCM3_DIR)/include
 
 SOURCES := $(wildcard $(SRC_DIR)/*.c)
+HEADERS := $(wildcard $(INCLUDE_DIR)/*.h)
 
 OBJS := $(notdir $(basename $(SOURCES)))
 OBJS := $(addsuffix .o, $(OBJS))
@@ -55,7 +58,7 @@ all: prepare $(BIN)
 prepare:
 	@mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/%.o: %.c
+$(BUILD_DIR)/%.o: %.c $(HEADERS) Makefile
 	$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
 
 clean:
@@ -67,8 +70,12 @@ flash: all
 erase:
 	st-flash erase
 
+openocd:
+	@rm itm-dump.fifo
+	openocd
+
 include $(OPENCM3_DIR)/mk/genlink-rules.mk
 include $(OPENCM3_DIR)/mk/gcc-rules.mk
 
 .PRECIOUS: $(OBJS) $(ELF)
-.PHONY: clean flash erase
+.PHONY: clean flash erase openocd
