@@ -7,10 +7,22 @@
 #include "utils.h"
 
 typedef enum {
-	RFID_STATUS_OK = 0,
-	RFID_STATUS_NO_TAG_ERROR,
-	RFID_STATUS_ERROR,
-} RC522_Status;
+	STATUS_OK,			   // Success
+	STATUS_ERROR,		   // Error in communication
+	STATUS_COLLISION,	   // Collission detected
+	STATUS_TIMEOUT,		   // Timeout in communication.
+	STATUS_NO_ROOM,		   // A buffer is not big enough.
+	STATUS_INTERNAL_ERROR, // Internal error in the code. Should not happen ;-)
+	STATUS_INVALID,		   // Invalid argument.
+	STATUS_CRC_WRONG,	   // The CRC_A does not match
+	STATUS_MIFARE_NACK = 0xff // A MIFARE PICC responded with NAK.
+} MFRC522_Status;
+
+typedef struct {
+	uint8_t size;
+	uint8_t uid[10];
+	uint8_t sak;
+} MFRC522_UID_t;
 
 /* Commands: */
 
@@ -59,7 +71,7 @@ typedef enum {
 /* enable and disable interrupt request control bitsTable 27 on page 39 */
 #define DivlEnReg 0x03
 /* request bitsTable 29 on page 39 */
-#define ComIrqReginterrupt 0x04
+#define ComIrqReg 0x04
 /* interrupt request bitsTable 31 on page 40 */
 #define DivIrqReg 0x05
 /* error bits showing the error status
@@ -163,6 +175,58 @@ typedef enum {
 /* shows the software version */
 #define VersionReg 0x37
 
+/* PICC commands: */
+
+// REQuest command, Type A. Invites PICCs in state IDLE to go to READY and
+// prepare for anticollision or selection. 7 bit frame.
+#define PICC_CMD_REQA 0x26
+// Wake-UP command, Type A. Invites PICCs in state IDLE and HALT to go to
+// READY(*) and prepare for anticollision or selection. 7 bit frame.
+#define PICC_CMD_WUPA 0x52
+// Cascade Tag. Not really a command, but used during anti collision.
+#define PICC_CMD_CT 0x88
+// Anti collision/Select, Cascade Level 1
+#define PICC_CMD_SEL_CL1 0x93
+// Anti collision/Select, Cascade Level 2
+#define PICC_CMD_SEL_CL2 0x95
+// Anti collision/Select, Cascade Level 3
+#define PICC_CMD_SEL_CL3 0x97
+// HaLT command, Type A. Instructs an ACTIVE PICC to go to state HALT.
+#define PICC_CMD_HLTA 0x50
+// Request command for Answer To Reset.
+// The commands used for MIFARE Classic (from
+// http://www.mouser.com/ds/2/302/MF1S503x-89574.pdf, Section 9) Use
+// PCD_MFAuthent to authenticate access to a sector, then use these commands to
+// read/write/modify the blocks on the sector. The read/write commands can also
+// be used for MIFARE Ultralight.
+#define PICC_CMD_RATS 0xE0
+// Perform authentication with Key A
+#define PICC_CMD_MF_AUTH_KEY_A 0x60
+// Perform authentication with Key B
+#define PICC_CMD_MF_AUTH_KEY_B 0x61
+// Reads one 16 byte block from the authenticated sector of the PICC. Also used
+// for MIFARE Ultralight.
+#define PICC_CMD_MF_READ 0x30
+// Writes one 16 byte block to the authenticated sector of the PICC. Called
+// "COMPATIBILITY WRITE" for MIFARE Ultralight.
+#define PICC_CMD_MF_WRITE 0xA0
+// Decrements the contents of a block and stores the result in the internal data
+// register.
+#define PICC_CMD_MF_DECREMENT 0xC0
+// Increments the contents of a block and stores the result in the internal data
+// register.
+#define PICC_CMD_MF_INCREMENT 0xC1
+// Reads the contents of a block into the internal data register.
+#define PICC_CMD_MF_RESTORE 0xC2
+// Writes the contents of the internal data register to a block.
+// The commands used for MIFARE Ultralight (from
+// http://www.nxp.com/documents/data_sheet/MF0ICU1.pdf, Section 8.6) The
+// PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE
+// Ultralight.
+#define PICC_CMD_MF_TRANSFER 0xB0
+// Writes one 4 byte page to the PICC.
+#define PICC_CMD_UL_WRITE 0xA2
+
 void MFRC522_SetBitMask(uint8_t reg, uint8_t mask);
 void MFRC522_ClearBitMask(uint8_t reg, uint8_t mask);
 
@@ -177,3 +241,72 @@ void MFRC522_Reset();
 void MFRC522_AntennaOn();
 void MFRC522_AntennaOff();
 bool MFRC522_SelfTest();
+void MFRC522_RandomId(uint8_t *outId);
+void MFRC522_WaitForFifoLefel(uint8_t fifoSize);
+
+MFRC522_Status PCD_TransceiveData(
+	// Pointer to the data to transfer to the FIFO.
+	uint8_t *sendData,
+	// Number of bytes to transfer to the FIFO.
+	uint8_t sendLen,
+	// nullptr or pointer to buffer if data should be read
+	// back after executing the command.
+	uint8_t *backData,
+	// In: Max number of bytes to write to *backData. Out:
+	// The number of bytes returned.
+	uint8_t *backLen,
+	// In/Out: The number of valid bits in the last byte.
+	// 0 for 8 valid bits. Default nullptr.
+	uint8_t *validBits,
+	// In: Defines the bit position in backData[0] for the
+	// first bit received. Default 0.
+	uint8_t rxAlign);
+
+MFRC522_Status MFRC522_Select(MFRC522_UID_t *uid);
+
+MFRC522_Status PCD_CalculateCRC(uint8_t *data, uint8_t length, uint8_t *result);
+
+MFRC522_Status MFRC522_Communicate_PICC(
+	// The command to execute. One of the PCD_Command enums.
+	uint8_t command,
+	// The bits in the ComIrqReg register that signals
+	// successful completion of the command.
+	uint8_t waitIRq,
+	// Pointer to the data to transfer to the FIFO.
+	uint8_t *sendData,
+	// Number of bytes to transfer to the FIFO.
+	uint8_t sendLen,
+	// nullptr or pointer to buffer if data should be read
+	// back after executing the command.
+	uint8_t *backData,
+	// In: Max number of bytes to write to *backData. Out:
+	// The number of bytes returned.
+	uint8_t *backLen,
+	// In/Out: The number of valid bits in the last byte.
+	// 0 for 8 valid bits.
+	uint8_t *validBits,
+	// In: Defines the bit position in backData[0] for the
+	// first bit received. Default 0.
+	uint8_t rxAlign,
+	// In: True => The last two bytes of the response is assumed
+	// to be a CRC_A that must be validated.
+	bool checkCRC);
+
+MFRC522_Status MIFARE_Read(
+	// MIFARE Classic: The block (0-0xff) number. MIFARE Ultralight: The first
+	// page to return data from.
+	uint8_t blockAddr,
+	// The buffer to store the data in
+	uint8_t *buffer,
+	// Buffer size, at least 18 bytes. Also number of bytes returned if
+	// STATUS_OK.
+	uint8_t *bufferSize);
+
+MFRC522_Status PICC_RequestA(
+	// The buffer to store the ATQA (Answer to request) in
+	uint8_t *bufferATQA,
+	// Buffer size, at least two bytes. Also number of bytes returned if
+	// STATUS_OK.
+	uint8_t *bufferSize);
+
+bool PICC_IsNewCardPresent();

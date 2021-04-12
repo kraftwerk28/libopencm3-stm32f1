@@ -1,23 +1,40 @@
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
+#include <libopencm3/stm32/adc.h>
 #include <libopencm3/stm32/dbgmcu.h>
+#include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/spi.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/usart.h>
 
+#include <stdbool.h>
+
 #include "mfrc522.h"
 #include "utils.h"
 
-/*
+/* MFRC522 onboard pinouts:
  * SDA - UART RX
  * SCK - UART DTRQ
  * MOSI - UART MX
- * MISO - UART TX
- */
+ * MISO - UART TX */
 
-#define debugger_attached() (DBGMCU_CR & 0x07)
+/* if (((ITM_TCR & ITM_TCR_ITMENA) != 0UL) && ((*ITM_TER & 1UL) != 0UL)) {
+ */
+/* 	while (!(ITM_STIM32(0) & ITM_STIM_FIFOREADY)) { */
+/* 	} */
+/* 	ITM_STIM8(channel) = ch; */
+/* } */
+
+static inline bool debugger_attached() { return (DBGMCU_CR & 0x07); }
+
+static inline uint8_t itm_send_char(uint32_t channel, uint8_t ch) {
+	while (!(ITM_STIM8(0) & ITM_STIM_FIFOREADY)) {
+	}
+	ITM_STIM8(channel) = ch;
+	return ch;
+}
 
 int _write(int fd, char *ptr, int len) {
 	(void)fd;
@@ -34,11 +51,9 @@ static const port_pin_t leds[] = {
 	{GPIOB, GPIO0},	 {GPIOB, GPIO1},
 };
 
-static const uint8_t nLeds = sizeof(leds) / sizeof(port_pin_t);
 static uint8_t cur = 0;
-
 static void update_leds() {
-	for (uint8_t i = 0; i < nLeds; i++) {
+	for (uint8_t i = 0; i < LEN(leds); i++) {
 		if ((cur >> i) & 1) {
 			gpio_set(leds[i].port, leds[i].pin);
 		} else {
@@ -47,8 +62,6 @@ static void update_leds() {
 	}
 	cur = (cur + 1) & 0x03ff;
 }
-
-/* static uint32_t systick_counter = 0; */
 
 void sys_tick_handler() {
 	/* systick_counter = (systick_counter + 1) % 1000; */
@@ -64,16 +77,53 @@ static void setup_clocks() {
 static void setup_gpio() {
 	rcc_periph_clock_enable(RCC_GPIOA);
 	rcc_periph_clock_enable(RCC_GPIOB);
-	/* rcc_periph_clock_enable(RCC_GPIOC); */
+	rcc_periph_clock_enable(RCC_GPIOC);
+	rcc_periph_clock_enable(RCC_AFIO);
 
-	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
-				  GPIO_SPI1_NSS);
-	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ,
-				  GPIO_CNF_OUTPUT_ALTFN_PUSHPULL,
-				  GPIO_SPI1_SCK | GPIO_SPI1_MOSI);
+	/* SPI1 Slave Select pin */
+	/* gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+	 */
+	/* 			  GPIO_SPI1_NSS); */
+
+	/* MFRC522 IRQ pin */
+	/* gpio_set_mode(GPIOB, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN, GPIO0);
+	 */
+
+	/* SPI1 Clock and MOSI pins */
+	/* gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, */
+	/* 			  GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, */
+	/* 			  GPIO_SPI1_SCK | GPIO_SPI1_MOSI); */
+
+	/* SPI1 MISO pin */
+	/* gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN, */
+	/* 			  GPIO_SPI1_MISO); */
+
+	/* Green LED */
+	gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_2_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+				  GPIO13);
+
+	/* On-board LED */
+	gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_2_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
+				  GPIO11);
+
+	/* Echo pin */
 	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN,
-				  GPIO_SPI1_MISO);
+				  GPIO_TIM2_CH2);
+
+	nvic_enable_irq(NVIC_EXTI1_IRQ);
+	exti_select_source(EXTI1, GPIOA);
+	exti_set_trigger(EXTI1, EXTI_TRIGGER_BOTH);
+	exti_enable_request(EXTI1);
+
+	/* Trigger pin */
+	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ,
+				  GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_TIM3_CH1);
+
+	/* Slave select must be 1 by default */
 	gpio_set(GPIOA, GPIO_SPI1_NSS);
+	/* gpio_set(GPIOC, GPIO13); */
+	/* Turn off on-board led */
+	gpio_set(GPIOB, GPIO11);
 
 	/* gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_2_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, */
 	/* 			  GPIO0 | GPIO1 | GPIO2 | GPIO3 | GPIO4 | GPIO5 | GPIO6); */
@@ -84,9 +134,16 @@ static void setup_gpio() {
 	/* 			  GPIO0 | GPIO1 | GPIO11); */
 	/* gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_2_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, */
 	/* 			  GPIO13); */
-	gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_2_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
-				  GPIO11);
-	gpio_set(GPIOB, GPIO11); // Resetting red led
+}
+
+void exti1_isr() {
+	exti_reset_request(EXTI1);
+	if (gpio_get(GPIOA, GPIO1)) {
+		timer_set_counter(TIM2, 0);
+	} else {
+		uint32_t distance = timer_get_counter(TIM2) / 58;
+		printf("Distance: %d cm.\n", distance);
+	}
 }
 
 static void setup_systick() {
@@ -95,11 +152,42 @@ static void setup_systick() {
 }
 
 static void setup_timers() {
+	/* Ultrasonic echo timer setup */
 	rcc_periph_clock_enable(RCC_TIM2);
-	nvic_enable_irq(NVIC_TIM2_IRQ);
-	timer_set_prescaler(TIM2, (rcc_apb1_frequency / 1000) - 1);
-	timer_set_period(TIM2, 2000 - 1);
-	timer_enable_irq(TIM2, TIM_DIER_UIE);
+	/* nvic_enable_irq(NVIC_TIM2_IRQ); */
+	timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+	timer_set_prescaler(TIM2, (rcc_apb1_frequency * 0.000001 * 2) - 1);
+	timer_set_period(TIM2, 0xffff - 1);
+	/* timer_ic_set_input(TIM2, TIM_IC2, TIM_IC_IN_TI1); */
+	/* timer_enable_irq(TIM2, TIM_DIER_UIE); */
+	/* timer_ic_enable(TIM2, TIM_IC2); */
+
+	/* Ultrasonic trigger timer setup */
+	rcc_periph_clock_enable(RCC_TIM3);
+	timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+	timer_set_prescaler(TIM3, (rcc_apb1_frequency * 0.000001) - 1);
+	timer_set_period(TIM3, 0xffff - 1);
+	timer_set_oc_mode(TIM3, TIM_OC1, TIM_OCM_PWM1);
+	timer_set_oc_value(TIM3, TIM_OC1, 10 - 1);
+	timer_enable_oc_output(TIM3, TIM_OC1);
+}
+
+void tim2_isr(void) {
+	if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
+		timer_clear_flag(TIM2, TIM_SR_CC2IF);
+		printf("INPUT CAPTURE interrupt; tim2 = %u/2000\n",
+			   timer_get_counter(TIM2));
+	}
+	/* if (timer_get_flag(TIM2, TIM_SR_TIF)) { */
+	/* 	timer_clear_flag(TIM2, TIM_SR_TIF); */
+	/* 	printf("TRIGGER trigger interrupt; tim2 = %u/2000\n", */
+	/* 		   timer_get_counter(TIM2)); */
+	/* } */
+	/* if (timer_get_flag(TIM2, TIM_SR_UIF)) { */
+	/* 	timer_clear_flag(TIM2, TIM_SR_UIF); */
+	/* 	printf("UPDATE interrupt; tim2 = %u/2000\n", timer_get_counter(TIM2));
+	 */
+	/* } */
 }
 
 static void setup_usart() {
@@ -119,56 +207,105 @@ static void setup_spi() {
 	rcc_periph_clock_enable(RCC_SPI1);
 	spi_reset(SPI1);
 	spi_init_master(
-		SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_128, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
+		SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_32, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
 		SPI_CR1_CPHA_CLK_TRANSITION_1, SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
 	spi_enable_software_slave_management(SPI1);
 	spi_set_nss_high(SPI1);
 	spi_enable(SPI1);
 }
 
-void tim2_isr(void) { timer_clear_flag(TIM2, TIM_SR_UIF); }
-
-void print_version() {
-	uint8_t ver = MFRC522_ReadCharFromReg(VersionReg);
-	printf("version code: %#x\n", ver);
+void setup_temp_sensor() {
+	rcc_periph_clock_enable(RCC_ADC1);
+	adc_power_off(ADC1);
+	adc_disable_scan_mode(ADC1);
+	adc_set_single_conversion_mode(ADC1);
+	adc_disable_external_trigger_regular(ADC1);
+	adc_set_right_aligned(ADC1);
+	adc_enable_temperature_sensor();
+	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
+	adc_power_on(ADC1);
+	delay(100);
+	adc_reset_calibration(ADC1);
+	adc_calibrate(ADC1);
 }
 
+/* #define RUN_SELFTEST */
+/* #define READ_PICC */
+
 int main() {
+	/* while (!debugger_attached()) { */
+	/* 	__asm("nop"); */
+	/* } */
+
 	setup_clocks();
-	setup_systick();
 	setup_timers();
 	setup_gpio();
-	setup_spi();
+	/* setup_spi(); */
 
-	systick_counter_enable();
+	delay(200);
+	timer_enable_counter(TIM1);
 	timer_enable_counter(TIM2);
+	timer_enable_counter(TIM3);
 
-	while (!debugger_attached()) {
-		delay(150);
-		gpio_toggle(GPIOB, GPIO11);
-	}
-
-	gpio_set(GPIOB, GPIO11);
-
-	printf("-------------------------------------------------------------------"
-		   "-------------\n");
-	printf("AHB frequency = %dHz\n", rcc_ahb_frequency);
-
-	print_version();
+#ifdef RUN_SELFTEST
+	MFRC522_Init();
 	MFRC522_SelfTest();
+	MFRC522_Reset();
+#endif
+
+#ifdef READ_PICC
+	MFRC522_Init();
+
+	MFRC522_UID_t uid = {0};
+	/* uint8_t buffer[64]; */
+	/* uint8_t bufLen; */
+
+	/* uint8_t id[10]; */
+	/* for (uint8_t i = 0; i < 255; i++) { */
+	/* 	MFRC522_RandomId(id); */
+	/* 	printf("%dth ID: ", i); */
+	/* 	for (uint8_t j = 0; j < LEN(id); j++) { */
+	/* 		printf("%02x ", id[j]); */
+	/* 	} */
+	/* 	printf("\n"); */
+	/* } */
 
 	while (1) {
-		delay(150);
-		print_version();
-		/* printf("timer: %d, %d\n", MFRC522_ReadCharFromReg(TCounterValReg1),
-		 */
-		/* 	   MFRC522_ReadCharFromReg(TCounterValReg1)); */
-		/* wprintf("AHB frequency: %d\n", rcc_ahb_frequency); */
-		/* eprintf("APB1 frequency: %d\n", rcc_apb1_frequency); */
-		/* printf("APB2 frequency: %d\n", rcc_apb2_frequency); */
-		/* for (uint32_t i = 0; i < rcc_ahb_frequency / 1000; i++) { */
-		/* } */
+		/* MFRC522_Status status = MIFARE_Read(0x00, buffer, &bufLen); */
+		while (!PICC_IsNewCardPresent()) {
+		}
+		printf("Some card detected! Trying to read...\n");
+		MFRC522_Status status = MFRC522_Select(&uid);
+		printf("Status: %d\n", status);
+		if (status != STATUS_OK) {
+			continue;
+		}
+		printf("Card detected\n");
+
+		/* 		printf("UID size: %u\n", bufLen); */
+		/* 		for (uint8_t i = 0; i < bufLen; i++) { */
+		/* 			printf("%02x ", buffer[i]); */
+		/* 		} */
+
+		printf("UID size: %u\n", uid.size);
+		for (uint8_t i = 0; i < uid.size; i++) {
+			printf("%02x ", uid.uid[i]);
+		}
+
+		printf("\n");
 	}
+
+#else
+
+	printf("AHB frequency = %d Hz\n", rcc_ahb_frequency);
+	printf("APB1 frequency = %d Hz\n", rcc_apb1_frequency);
+	printf("APB2 frequency = %d Hz\n", rcc_apb2_frequency);
+
+	while (1) {
+		__asm("nop");
+	}
+
+#endif
 
 	return 0;
 }

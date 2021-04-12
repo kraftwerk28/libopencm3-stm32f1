@@ -11,9 +11,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+// TODO: shall be included from <stdio.h>
+extern int dprintf(int fd, const char *restrict format, ...);
+
 #define printf(...) (dprintf(0, __VA_ARGS__))
 #define wprintf(...) (dprintf(1, __VA_ARGS__))
 #define eprintf(...) (dprintf(2, __VA_ARGS__))
+#define LEN(array) (sizeof(array) / sizeof(array[0]))
 
 typedef struct {
 	uint32_t port;
@@ -24,20 +28,10 @@ static inline float mix(float x, float a, float b, float c, float d) {
 	return (x * d - x * c - a * d + b * c) / (b - a);
 }
 
-static inline uint8_t itm_send_char(uint32_t channel, uint8_t ch) {
-	if (((ITM_TCR & ITM_TCR_ITMENA) != 0UL) && ((*ITM_TER & 1UL) != 0UL)) {
-		while (!(ITM_STIM8(0) & ITM_STIM_FIFOREADY)) {
-		}
-		ITM_STIM8(channel) = ch;
-	}
-	return ch;
-}
-
 /* SysTick based delay */
 static inline void delay(uint32_t ms) {
-	uint32_t n = STK_RVR_RELOAD - ms * (rcc_ahb_frequency / 1000);
-	systick_clear();
-	while (systick_get_value() >= n) {
+	uint32_t n = (rcc_ahb_frequency * 0.0005) * ms;
+	while (n--) {
 	}
 }
 

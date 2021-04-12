@@ -1,7 +1,7 @@
 OPENCM3_DIR = libopencm3
 TARGET_CPU = cortex-m3
-TARGET_DEVICE = STM32F10X_MD
 DEVICE = stm32f103c8t6
+# DEVICE = stm32l152rct6
 Q = @
 BUILD_DIR = build
 SRC_DIR = src
@@ -43,6 +43,9 @@ INCFLAGS = \
 	-I $(OPENCM3_DIR)/include
 
 SOURCES := $(wildcard $(SRC_DIR)/*.c)
+# SOURCES := $(filter-out $(SRC_DIR)/main.c $(SRC_DIR)/mfrc522.c, $(SOURCES))
+SOURCES := $(filter-out $(SRC_DIR)/stm32l152.c, $(SOURCES))
+
 HEADERS := $(wildcard $(INCLUDE_DIR)/*.h)
 
 OBJS := $(notdir $(basename $(SOURCES)))
@@ -52,27 +55,31 @@ OBJS := $(addprefix $(BUILD_DIR)/, $(OBJS))
 VPATH = $(dir $(SOURCES))
 
 DEFS = -D STM32F1
+# DEFS = -D STM32L1
 
-all: prepare $(BIN)
+all: build
+
+build: prepare $(BIN)
 
 prepare:
 	@mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.c $(HEADERS) Makefile
-	$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
+	@$(CC) -c $(CFLAGS) $(INCFLAGS) $(DEFS) -o $@ $<
 
 clean:
 	@rm -rf $(BUILD_DIR)
+	@rm -f generated.*.ld
 
 flash: all
-	st-flash --reset write $(BIN) 0x08000000
+	st-flash write $(BIN) 0x08000000
 
 erase:
 	st-flash erase
 
-openocd:
-	@rm itm-dump.fifo
-	openocd
+openocd: build
+	@rm -f itm-dump.fifo
+	@openocd
 
 include $(OPENCM3_DIR)/mk/genlink-rules.mk
 include $(OPENCM3_DIR)/mk/gcc-rules.mk
